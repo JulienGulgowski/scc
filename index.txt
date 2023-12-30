@@ -1,0 +1,562 @@
+include::/tmp/t.ad[]
+
++++ <small> +++
+
+* Repo: httpx://github.com/lvv/scc[GitHub],  httpx://bitbucket.org/lvv/scc[BitBucket] +
+* License:  httpx://en.wikipedia.org/wiki/Boost_Software_License[Boost Software License]
+
++++ </small> +++
+
+C++ REPL
+--------
+
+At bash prompt - expression evaluated and printed:
+
+----------------------------------------------------------------------------
+scc 2+2								
+4
+----------------------------------------------------------------------------
+
+If expression is not terminated with semicolon, it is sent to `std::cout`.
+If snippet have bash special characters,  it must be in single or double
+quotes. If expression starts with minus, end-of-options indicator `--` must be used:
+
+----------------------------------------------------------------------------
+scc '"hello world"'
+hello world
+
+scc -- -42
+-42
+
+scc "bitset\<8>('a')"
+01100001
+
+scc 'double x=0.5;  sin(x)'						
+0.479426
+
+echo "ABC"  |  scc 'char c;  while (cin>>c)  cout << tolower(c);'
+abc
+----------------------------------------------------------------------------
+
+If double semicolon `;;` is present, then what come before it is goes before `main` (into the file scope):
+
+--------------------------------------------
+scc 'int f(int i) {return  i+i;} ;;  f(10)'
+20
+--------------------------------------------
+
+Snippet is evaluated in environment where most of +++C++ +++ Standard Library includes are included and
+most STD entities are imported into default namespace with `using std::...;`
+
+If you need only plain +++C++ +++ REPL, that is about all you need to know.
+You can skip to link:#_install[install] section now.  SCC optional modules are described below.
+
+
+Shortcuts and predeclared vars
+-------------------------------
+
+Shortcuts are typedefs and macros to cut verbosity for REPL 1-liner environment.
+
+------------------------------------------------------
+str	-->   std::string  
+vint	-->   std::vector<int>  
+vfloat	-->   std::vector<float>  
+lint	-->   std::list<int>  
+dint	-->   std::deque<int>  
+WRL	-->   while(read_line())      
+...
+------------------------------------------------------
+
+Some variables are pre-defined.
+You don't need to remember these. Predefined variables are defined in external
+to snippet scope, so you can re-define these to what ever you want. 
+
+* `i`, `j`, `k`, `n`, `m` -- `long`, initialized to 0
+* `x`, `y`, `z` --  `double`, initialized to 0
+* `s`, `w` -- `std::string`
+* `c` -- `char`
+* `p` -- `char*`
+
+
+
+/////////////////////////////////////////////////////////////////////
+Examples
+--------
+
+Square an array.  +++C++11 +++ is on by default:
+
+----------------------------------------------------------------------------
+scc 'vint V{1,2,3};  for(auto v:V) v*=v;   V'			
+{1, 4, 9}								
+----------------------------------------------------------------------------
+*/
+
+Calculate words frequencies from `stdin`. (`w` - is pre-defined `std::string`)
+
+----------------------------------------------------------------------------
+echo aa bb aa | scc 'map<str,int> M;  while(cin>>w) M[w]++;  M' 
+{⟨aa,2⟩, ⟨bb,1⟩}
+----------------------------------------------------------------------------
+
+You can also find a lot of examples in `u-*` files.  These are unit-test like files.
+/////////////////////////////////////////////////////////////////////
+
+
+
+
+RO Module
+----------
+
+http://volnitsky.com/project/ro/[Range Operators] (headers only
+library) was recently split off SCC. It can be useful if you use STL
+containers, strings and want simpler replacement for `std::cout`.
+
+Some examples of what it can do:
+
+-----------------------------------------------------------------------------------------
+
+//  Can print ranges, container, tuples, etc directly (vint is vector<int>) :
+scc 'vint V{1,2,3};  V'
+{1,2,3}
+
+//  Assign 42 to 2..5
+scc 'vint V=range(0,9);   range(V/2, V/5) = 42;  V'
+{0, 1, 42, 42, 42, 5, 6, 7, 8, 9}
+
+//  Find (brute force algorithm) maximum of  `cos(x)` in interval: `8 < x < 9`:
+scc 'range(8, 9, 0.01) * cos  || max'
+-0.1455
+
+//  Integrate sin(x) from 0 to pi.  Object 'plus_' is shortcut for std::plus<T>()
+scc 'auto d=0.001;  (range(0,pi,d) * sin || plus_) * d'
+2
+
+//  Concatenate vector of strings
+scc 'vstr V{"aaa", "bb", "cccc"};  V || plus_'
+aaabbcccc
+
+//  Total length of strings in vector of strings
+scc 'vstr V{"aaa", "bb", "cccc"};  V * size ||  plus_'
+9
+
+//  Assign to c-string, then append `"XYZ"` and then remove `"bc"` substring :
+scc 'char s[99];  range(s) = "abc";  (range(s) << "XYZ") - "bc"'
+aXYZ
+
+//  Remove non alpha-num characters and convert to upper case
+scc '(range("abc-123, xyz/") | isalnum) * toupper'
+ABC123XYZ
+
+// Hide phone number:
+scc "str S=\"John Q Public  (650)1234567\";  S|isdigit='X';  S"
+John Q Public  (XXX)XXXXXXX
+
+-----------------------------------------------------------------------------------------
+
+
+
+Requires:  +++ C++11 +++   compiler.  Oldest tested compilers: GCC-4.7.2, GCC-4.8, CLANG-3.2
+
+In order to use it, you need to install it, and tell SCC where to look for its
+include files if it is installed in directory which is not searched by default
+by compiler.
+
+Options `-s` / `-S` can enable/disable this module.  Set environment variable
+`scc_RO` (to any value) enables it.
+
+If enabled its print operator will be used instead of `std::cout` to print last
+statement-expression.
+
+
+
+AWK Module
+~~~~~~~~~~
+
+This is module that is bundled with SCC. It can be
+disabled if for example your compiler can not compile it for some reason. 
+Options `-a` / `-A` enable/disable it.  Set environment variable
+`scc_AWK` (to any value) enables it. 
+
+
+AWK module allows stream processing - similar to real AWK.
+
+Syntax is not exactly AWK's,  it is still +++C++ +++, but it is quite similar.
+
+Biggest difference  is script layout. AWK's script have following
+elements (simplified):
+
+----------------------------------------------------------------------------
+awk 'BEGIN{begin-expr};  {per-record-expr};  END{end-expr}'
+----------------------------------------------------------------------------
+
+SCC have two alternatives for above. First is explicit while-loop:
+
+----------------------------------------------------------------------------
+scc 'begin-expr;  WRL  per-record-expr;   end-expr;'
+----------------------------------------------------------------------------
+
+Shortcut `WRL` expands to `while(read_line())`.  
+Function `read_line()`, reads input line and splits it into fields.
+
+Second alternative is to use options `-n` and `-p`.
+With `-n`, record is read, split into fields and snippet is evaluated for every
+record.  With `-p`, additionally all fields are printed after snippet was
+evaluated.  These are equivalent to PERL's and 
+are convenient when we do not have _begin-expr_ and _end-expr_.
+
+----------------------------------------------------------------------------
+scc -n 'per-record-expr;'
+----------------------------------------------------------------------------
+
+Fortunately,  GCC and CLANG allows use of `$` in identifiers, so AWK's dollar 
+variables (`$0`, `$1`, `$NF`) are valid in SCC.
+
+In SCC, line's fields are of special string type `fld`, it is similar to `std::string` but it can be
+used in arithmetic expressions - they can be implicitly converted to corresponding numeric type. And it
+can be assigned a numeric value. That is `fld` behave like AWK's vars.
+Numeric types are any of `int`, `float`, etc.
+
+--------------------------------
+fld   f("1");
+int     i;
+
+i = f;		// 1
+i = f+1;	// 2
+f = 2;		// "2"
+f + " m/s"	// "2 m/s"
+f + 5		// "7"
+---------------------------------
+
+SCC supports following AWK's global variables:
+
+* `$`	-  derived from  `std::deque<fld>` — line's fields
+* `NF`	-  `long`,  number of fields (set after read_line())
+* `NR` 	-  `long`,  number of records read so far (set after read_line())
+* `OFS`	-  `strr`, output field separator (another special type - string reference).
+* `FS` 	-  `strr`, input field separator.  
+* `ORS`	-  `strr`, output record separator 
+* `RS` 	-  `strr`, input record separator.  
+* `FILENAME` - `const char[]`, current filename being processed
+
+
+More examples.  Sum-up `DF(1)` used-disk-space column.  In AWK and SCC:
+
+----------------------------------------------------------------------------
+df | awk '{n+=$3};  END{print n}'
+31399199
+
+df | scc 'WRL n+=$3;  n' 
+31399199
+----------------------------------------------------------------------------
+
+We can also replace column number with symbolic name (from `df` output header):
+
+----------------------------------------------------------------------------
+df | scc -H 'WRL n+=$("Used");  n' 
+31399199
+----------------------------------------------------------------------------
+
+Prepend line number to every line.
+
+----------------------------------------------------------------------------
+echo -e 'aaa\nbbb'   |   scc -p NR
+1 aaa
+2 bbb
+----------------------------------------------------------------------------
+
+For every line: first `NR` is printed (notice that there is no semicolon),
+then `$0`.
+
+Now lets make comma separated fields out of colon separated.  Option `-o` sets `OFS`
+(output field separator), `-F` - set `FS`  Snippet is empty in this example.
+
+----------------------------------------------------------------------------
+echo 1:2:3 | scc -F: -o, -p
+1,2,3
+----------------------------------------------------------------------------
+
+Or equivalent:
+
+----------------------------------------------------------------------------
+echo 1:2:3 | FS=: OFS=, scc -p
+1,2,3
+----------------------------------------------------------------------------
+
+
+////////////////////////////////////////////////////////////////////////////////////
+Replace `"-"` or  `"none"` with `"n/a"` in 2nd column using `std::regex`.  In AWK and SCC:
+
+---------------------------------------------------------------------------
+echo -e '1 -\n2 none\n3 abc'  |  awk '{gsub(/^(none|-)$/,"n/a",$2);  print $0}'
+1 n/a
+3 n/a
+4 abc
+
+echo -e '1 -\n2 none\n3 abc'  |  scc -p 'if ($2 == "(none|-)"_R)  $2="n/a";'
+1 n/a
+3 n/a
+4 abc
+----------------------------------------------------------------------------
+
+
+
+C-string with `_R` suffix are `std::regex` literal.  The `operator==` calls `std::regex_match()`.
+Unfortunately GCC's LIBSTDC not yet +++ C++11 +++  compliant.  Algorithms
+`std::regex_replace` and `std::regex_search` are not implemented yet in
+LIBSTDC++  and we have to use `if`.
+////////////////////////////////////////////////////////////////////////////////////
+
+
+OpenCV Module
+-------------
+
+Provides complete OpenCV environment. SCC with OpenCV module provides similar functionaly to ImageMagick.
+Off by default. Turn on with `--cv` o `--oc` options.   Or set
+environmental vaiable `I`.
+
+
+Reads leng.png, and displays it:
+
+-----------------------------------------------------------------------------------------
+scc --cv 'Mat I(imread("lena.png"));  imshow("",I);  waitKey();'
+-----------------------------------------------------------------------------------------
+
+Same but using global enviromental varibale `I`:
+
+-----------------------------------------------------------------------------------------
+I=lena.png
+scc --cv 'imshow("",I);  waitKey();'
+-----------------------------------------------------------------------------------------
+
+Same but instead of global, we will  use temporary (with scc lifetime) env variable:
+
+-----------------------------------------------------------------------------------------
+unset I    // now global I is not set
+I=lean.png   scc --cv  'imshow("",I);  waitKey();'
+-----------------------------------------------------------------------------------------
+
+Same with using SCC's `show()` function:
+
+-----------------------------------------------------------------------------------------
+I=lean.png   scc --cv  'show(I);'
+-----------------------------------------------------------------------------------------
+
+Environmental variale `I` and `--cv` options enable earch other.  If only one
+is set, second will be set automaticly.  When `I` is set, we don't need to set `--cv` too.
+If `--cv` is pesent but `I` is unset, SCC reads `lena.png` into `I`.
+(TODO: frome what dir?)
+
+Convert to TIFF:
+
+---------------------------------------------------------------------------------------
+scc --cv 'imwrite("lena.tif",I)'
+-----------------------------------------------------------------------------------------
+
+Resize, make x2 times smaller:
+
+-----------------------------------------------------------------------------------------
+scc --cv 'cv::resize(I,I,Size{},0.5,0.5); imwrite("small.png",I);'
+-----------------------------------------------------------------------------------------
+
+Add noise:
+
+---------------------------------------------------------------------------------------
+scc --cv 'asI(R);  randn(R,0,50);  show(I+R);'
+-----------------------------------------------------------------------------------------
+
+Shortcut `asI` declares a cv::Mat with the same type and size as I.
+
+Edge detector:
+
+-----------------------------------------------------------------------------------------
+scc --cv 'Mat E; cv::Canny(I,E,10000,35000, 7);  show(E);'
+-----------------------------------------------------------------------------------------
+
+
+
+Install
+-------
+
+-----------------------------------------
+git clone http://github.com/lvv/scc scc
+cd scc
+echo "PATH+=:$PWD/scc/" >> ~/.profile
+. ~/.profile
+scc '"SCC is installed"'
+---------------------------------------
+
+With no or empty config, all optional modules will be disabled, and default compiler will be GCC.
+
+There is `scc/example_config` which you can copy (and edit) into one of:  `/etc/scc`, 
+`~/.scc` or `.scc`.
+
+GCC Pre-compiled headers
+~~~~~~~~~~~~~~~~~~~~~~~~
+For GCC you can enable precompiled headers, which will allow slightly (20%) faster compile.
+This is not recommended if you are going to update SCC or GCC.
+Command `scc -make-gch` will create directory `.gch` with precompiled headers:
+
+-----------------
+cd path-to-scc-home
+scc --make-gch
+ls -l .gch
+-----------------
+
+You need re-generate pre-compiled headers if SCC or GCC install was modified.
+To disable pre-compiled headers, run `rm -rf gch`.   
+
+
+Status 
+------
+
+Parser which extracts last +++ C++ +++ statement from snippet is semi-broken.
+It sometimes incorrectly parse (to extract last expression) multi-line scripts
+or expressions with "{}". See `u-sed` file for details.  As workaround
+terminate every line with semicolon (even comment-line) and do not use
+print-if-not-terminated-with-semicolon feature.
+
+Regex in `RS`/`FS` are currently not supported (but were in v0.1) 
+
+AWK module should be fixed to handle white space exactly like AWK.
+
+
+
+== Refs 
+
+* httpx://en.wikipedia.org/wiki/Delimiter[Delimiter]
+* httpx://en.wikipedia.org/wiki/Comma-separated_values[CSV]
+* httpx://home.vrweb.de/~juergen.kahrs/gawk/XML/[XMLgawk]
+* httpx://en.wikipedia.org/wiki/Awk[Awk]
+* httpx://people.cs.uu.nl/piet/docs/nawk/nawk_23.html[Awk: Specifying how Fields are Separated]
+* httpx://gcc.gnu.org/onlinedocs/libstdc++/manual/status.html#status.iso.200x[LIBSTDC++ status +++C++11+++]
+* httpx://www.informit.com/guides/content.aspx?g=cplusplus&seqNum=286[Why I Hate Namespaces]
+* httpx://www.gotw.ca/publications/mill17.htm[Why Not Specialize Function Templates?]
+* httpx://richardminerich.com/2012/07/functional-programming-is-dead-long-live-expression-oriented-programming/[Functional Programming is Dead, Long Live Expression-Oriented Programming]
+
+
+////////////////
+
+new 
+	EDA
+		histogram -- https://github.com/visionmedia/histo
+	python awk -- https://github.com/alecthomas/pawk
+	serialization -- http://uscilab.github.io/cereal/
+		
+STRING
+	https://github.com/facebook/folly/blob/master/folly/docs/FBString.md
+
+MAP
+	TRIE
+		http://login2win.blogspot.com/2011/06/c-tries.html
+
+	HASH_MAP
+		http://msinilo.pl/blog/?p=170
+			fastest -- http://code.google.com/p/rdestl/
+			http://attractivechaos.wordpress.com/2008/08/28/comparison-of-hash-table-libraries/
+			http://attractivechaos.wordpress.com/2008/09/12/the-google-hash-table-library/
+			http://www.augustana.ca/~mohrj/courses/1999.fall/csc210/lecture_notes/hashing.html
+			http://svn.python.org/view/python/trunk/Objects/dictnotes.txt?view=markup&pathrev=53782
+	http://stackoverflow.com/questions/11614106/is-gcc-stdunordered-map-implementation-slow-if-so-why
+
+REF STRING
+	http://www.open-std.org/JTC1/SC22/WG21/docs/papers/2013/n3609.html
+
+BENCHMARKS
+	A Benchmark for Reading Flat Files Into Memory for Awk, Python, Perl, Java, and Ruby (steve.80cols.com)
+		http://www.reddit.com/r/programming/comments/pub98/a_benchmark_for_reading_flat_files_into_memory/
+		v2 --  http://steve.80cols.com/flat_file_bakeoff.html
+		v1 -- http://steve.80cols.com/reading_flat_files_into_memory_benchmark.html
+		https://github.com/lorca/flat_file_benchmark/watchers
+
+	read/fread/mmpa -- http://lemire.me/blog/archives/2012/06/26/which-is-fastest-read-fread-ifstream-or-mmap/
+
+PARSING C++
+	http://www.codesynthesis.com/~boris/blog/2010/05/03/parsing-cxx-with-gcc-plugin-part-1/
+	http://eli.thegreenplace.net/2011/07/03/parsing-c-in-python-with-clang/
+
+STL
+	map adapter: https://github.com/krig/k11/blob/master/src/tests/iter.cpp
+
+GNU AWK
+	Specifying how Fields are Separated -- http://www.staff.science.uu.nl/~oostr102/docs/nawk/nawk_23.html
+	one liners -- http://www.gnu.org/s/gawk/manual/gawk.html#One_002dshot
+
+STR TO INT 
+	http://www.partow.net/programming/strtk/index.html
+	https://github.com/facebook/folly/blob/master/folly/docs/Conv.md
+	http://www.kumobius.com/2013/08/c-string-to-int/
+
+
+TOKENIZER 
+	http://www.codeproject.com/KB/recipes/Tokenizer.aspx
+FORMATS
+	ALL
+		http://dev.umpirsky.com/list-of-all-countries-in-all-languages-and-all-data-formats/
+		https://github.com/simonask/reflect
+
+	JSON
+		https://github.com/hjiang/jsonxx
+		jq is like sed for JSON data -- http://stedolan.github.io/jq/
+		json parse in spirit -- http://boost-spirit.com/repository/applications/json_spirit.zip
+		http://www.kirit.com/Blog:/2008-03-31/Thoughts%20on%20TinyJSON
+		http://www.kirit.com/Thread:/1723074
+		http://stackoverflow.com/questions/245973/whats-the-best-c-json-parser
+		http://stackoverflow.com/a/8560856
+		https://github.com/udp/json-parser
+		http://zserge.bitbucket.org/jsmn.html
+		http://stackoverflow.com/questions/8216743/how-to-read-big-json
+
+	CSV
+		http://csvkit.readthedocs.org/en/latest/index.html
+		http://www.partow.net/programming/strtk/index.html
+		http://blog.johantibell.com/2012/11/streaming-and-incremental-csv-parsing.html
+	XML
+		xml parser in spirit
+			-- http://boost-spirit.com/repository/applications/xml.zip
+			-- http://boost-spirit.com/repository/applications/Arabica.html
+		http://zenxml.sourceforge.net/
+		awk xml -- http://pastebin.com/Vwvz3gzb
+		http://www.artima.com/cppsource/xml_data_binding.html
+		http://www.grinninglizard.com/tinyxml/
+		http://stackoverflow.com/questions/170686/best-open-xml-parser-for-c
+		http://rapidxml.sourceforge.net/
+		http://www.codeguru.com/cpp/data/data-misc/xml/article.php/c19341
+		-----------
+		There is a boost::xml in the sandbox and it's very good. We use
+		TinyXML++ (which is decent) here but boost::xml was preferred; it was
+		just too likely to change
+	S-Expressions
+		http://shinkirou.org/blog/2010/06/s-expressions-the-fat-free-alternative-to-json/
+ENCODING
+	Boost.Unicode: Aims at providing the foundation tools to
+	accurately represent and deal with natural text in C++ in a
+	portable and robust manner, so as to allow internationalized
+	applications, by implementing parts of the Unicode Standard.
+	(see (svn.boost.org/trac/boost/wiki/…;)
+		
+	This is already included as part of C++03. It's
+	provided by the std::codecvt facet of the locale
+	library
+		
+	Take a look on Boost.Locale it is a part of it
+DB
+	http://tildeslash.com/libzdb/#
+	SQL parser in spriti -- http://boost-spirit.com/repository/applications/spirit_sql.zip
+	SQL connectors -- http://www.reddit.com/r/cpp/comments/mrbc5/how_to_connect_to_an_sql_database/
+	http://soci.sourceforge.net/
+	https://svn.boost.org/trac/boost/wiki/LibrariesUnderConstruction#Boost.RDB
+	http://webtoolkit.eu/wt#/blog/2009/11/26/wt__dbo__an_orm__c___style
+	http://code.google.com/p/hiberlite/
+	http://kahimyang.info/kauswagan/howto_blogs/1326-a_simple_c_c___database_daemon
+	sqlite - https://github.com/catnapgames/NLDatabase
+	------------------
+	Regarding boost::sql proposal, there is some work in progress:
+	    * On BoostCon'09 Jeff Garland led workshop: Library in Week 2009 to discuss the std::rdb propsals, here are materials std::rdb (.tgz package)
+	    * std_rdb - Boost sister mailing list to discuss standard rdb proposal(s)
+	    * SOCI has been discussed in frame of the std::rdb mailing list and the workshop
+FILESYSTEM
+	boost filesystem -- http://stackoverflow.com/questions/13897401/boost-filesystem-incredibly-slow
+
+
+vim: ft=asciidoc
+///////////////////////////////////

@@ -1,0 +1,207 @@
+#!/bin/bash
+
+
+[[ -f /etc/scc ]]  && . /etc/scc
+[[ -f   ~/.scc ]]  && .   ~/.scc
+[[ -f     .scc ]]  && .     .scc
+
+[[ -f /etc/scc.h ]]  &&  CXXFLAGS+=" -include /etc/scc.h "
+#[[ -f   ~/.scc.h ]]  &&  CXXFLAGS+=" -include   ~/.scc.h "
+[[ -f     .scc.h ]]  &&  CXXFLAGS+=" -include     .scc.h "
+
+
+
+
+CXXFLAGS+=" -std=c++14 -fdiagnostics-color=always -Wall  -Wno-unused-function -Wno-unknown-pragmas"
+GCC_COLORS="error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+#[[ -n $sT ]] && CXXFLAGS+=" -DsT=$sT "
+
+
+tmpdir=/tmp/`{ echo scc-$USER-; tty; } | sed "s/^\/dev\///"| tr -dc "[0-9a-zA-Z-]"`
+mkdir -p ${tmpdir:?}
+chmod 700 $tmpdir
+
+SCC_HOME=$(dirname $(readlink -f $0))
+CXXFLAGS+=" -I $SCC_HOME -I ${SCC_HOME%/*} -I $tmpdir "
+
+main_cc=$SCC_HOME/main.cc
+main_exe=$tmpdir/main_exe
+snippet_cc=$tmpdir/snippet.cc
+snippet_h=$tmpdir/snippet.h
+rm -f $main_exe
+execute=1
+
+usage_exit() {
+	echo "
+	usage:  scc  [options]  snippet  [files|args] 
+		
+		-n 		- for each line: read line; split into fields; execute snippet 
+		-p 		- for each line: read line; split into fields; execute snippet;  output fields
+		-f filename 	- get snippet from filename
+
+		-i ifs 		- sets simple (not regex)  IFS (input field separator).
+		-F ifs 	       
+		--ifs ifs      
+
+		-o ofs 		- sets OFS (output field separator) 
+		--ofs ofs      
+		--fs ofs       
+
+		-X filename	- save executable to file and do not execute it
+		-D macro	- adds macro: CXXFLAGS+=" -Dmacro "
+		-O 		- optimized compile
+		-g 		- debug compile
+		-H 		- read header 
+		--make-gch 	- regenerate GCH (gcc precompiled headers) 
+		-a val		- instead of outputting last-statement-expression, do: assert(expr==val);
+		--assert val   
+
+		-A		- without AWK module
+		-r		- with    RO module
+		-R		- without RO module
+	"
+	exit 0
+}
+
+####################################################################################### OPTIONS 
+gch_dir=$SCC_HOME/.gch
+
+
+
+[[ $# == 0 ]]  &&  usage_exit
+TEMP=`getopt -o a:AhrRnpf:vBi:F:o:x:OgHtbD: -l boost-bind,boost-lambda,help,make-gch,no-awk,ro,with-ro,no-ro,without-ro,cv,assert: -- "$@"`
+[[ $? != 0 ]]  &&  usage_exit
+#[[  $1 ]]      ||  usage_exit
+
+[[ -n ${I} ]]  &&  TEMP=" --cv $TEMP"
+
+eval set -- "$TEMP"
+
+
+while true ; do
+	case "$1" in
+		-n)	CXXFLAGS+=" -Dscc_N  -Dscc_IS_STREAM ";	 n_opt=1;  is_stream=1; shift ;;
+		-p)	CXXFLAGS+=" -Dscc_P  -Dscc_IS_STREAM ";  p_opt=1;  is_stream=1; shift ;;
+
+		-a|--assert)	CXXFLAGS+=" -Dscc_ASSERT "; scc_PRINTER="assert(("; scc_PRINTER_END=")==$2)"; shift 2 ;;
+		-A|--no-awk)	unset scc_AWK;  shift ;;
+
+		-r|--ro|--with-ro)	scc_RO=1;  shift ;;
+		-R|--no-ro|--without-ro)	unset scc_RO;  shift ;;
+
+		-D)	CXXFLAGS+=" -D$2 ";  shift 2 ;;
+		-f)	snippet_file=$2;  shift 2 ;;
+		-v)	verbose=1;  shift ;;
+		-I)	CXXFLAGS+=" -Dscc_IFS=$2 ";  shift 2 ;; 
+		-X)	execute=0;  main_exe=$2;  shift 2 ;;
+		-i|-F|--ifs)	if [[ $2 =~ '"' ]];  then  CXXFLAGS+=" -Dscc_ifs=$2 "
+						  else  CXXFLAGS+=" -Dscc_ifs=\"$2\" ";  fi;  shift 2;; 
+		-o|--ofs|--fs)	if [[ $2 =~ '"' ]];  then  CXXFLAGS+=" -Dscc_OFS=$2 "
+						  else  CXXFLAGS+=" -Dscc_OFS=\"$2\" ";  fi;  shift 2;; 
+		-O) 	CXXFLAGS+=$O_FLAGS; gch_dir=.gch/O; is_optimized=1; shift ;;
+		-g) 	CXXFLAGS+=$g_FLAGS; gch_dir=.gch/g; shift ;;
+		-H)	CXXFLAGS+=" -Dscc_HEADER "; shift  ;;
+		-h|--help)	usage_exit;;
+		-t)	time="time -f'\t%E wall  ==  (%U+%S)        %M KB\n"; CXXFLAGS+="-O3 -march=native";;
+		-b)	CXXFLAGS+=" -Dscc_BENCHMARK ";  p_opt=1; CXXFLAGS+="-O3 -march=native"; shift ;;
+		--cv|--oc)     
+			LDFLAGS+=" `pkg-config --libs   /usr/local/opencv/lib/pkgconfig/opencv.pc`"; 
+			CXXFLAGS+="`pkg-config --cflags /usr/local/opencv/lib/pkgconfig/opencv.pc` -Dscc_OPENCV  -I/home/lvv/p/ -I/home/lvv/p/cv/ -I.. -I../.. -include cv.h";
+			[[ -n ${I} ]] && CXXFLAGS+=" -Dscc_I_path=\"${I}\" "
+			shift
+			;;
+		--boost-bind)	CXXFLAGS+=" -Dscc_BOOST_BIND "  ;  shift ;;
+		--boost-lambda)	CXXFLAGS+=" -Dscc_BOOST_LAMBDA ";  shift ;;
+		--make-gch)
+			set -x 
+			mkdir -p .gch/O
+			mkdir -p .gch/g
+			g++ $CXXFLAGS $O_FLAGS cj.h -o .gch/O/cj.h.gch  
+			g++ $CXXFLAGS $g_FLAGS cj.h -o .gch/g/cj.h.gch
+			g++ $CXXFLAGS          cj.h -o .gch/cj.h.gch
+			exit 0
+			;;
+		#*) 	usage_exit;;
+		--) shift ; break ;;
+		*) echo "getopt error" ; echo == $@ ==; exit 1 ;;
+	esac
+done
+
+#### CONFIG
+
+[[ $scc_RO ]] && CXXFLAGS+=" -Dscc_RO "
+[[ $scc_AWK ]] && CXXFLAGS+=" -Dscc_AWK "
+default_CXX="${default_CXX-g++}"
+
+
+if [[ $scc_RO ]];  then 
+	scc_PRINTER="${scc_PRINTER:-out(),}"
+else
+	scc_PRINTER="${scc_PRINTER:-std::cout<<}"
+fi
+
+
+####
+[[ -d $gch_dir ]] && CXXFLAGS=" -include $gch_dir/cj.h    -Winvalid-pch  $CXXFLAGS "
+[[ -f .scc.h   ]] && CXXFLAGS+=" -include $PWD/.scc.h  "
+##[[ -f ~/.scc.h   ]] && CXXFLAGS+=" -include /home/lvv/.scc.h  "
+[[ $is_optimized  ]] || { CXXFLAGS+=$g_FLAGS;  gch_dir=.gch/g; }
+
+
+# shift out snippet arg
+#[[ -z $snippet_file ]]  &&  shift $((OPTIND-1))
+shift $((OPTIND-1))
+
+
+#####################################################################################  PARSE SNIPPET
+
+if [[ $verbose ]] ; then 
+	echo -n "expression: $1             "
+	echo -n "gcc-v: `(gcc -v  2>&1) | sed -n '/^gcc version/s/^gcc version \([.0-9]*\) .*/\1/p'`            "
+	echo "CXXFLAGS:  ${CXXFLAGS}"
+fi 
+
+
+if [[ -z $snippet_file ]] ;  then
+	snippet_file=$tmpdir/snippet.scc
+	echo "${1%% }" > $snippet_file
+	shift 1
+fi
+
+
+# wrap last statment into "cout << (last_statement) << endl;"
+#cat  $snippet_file | sed  's/.*;;//;s/$//;s/[ \t]*$//;s/\(.*[;}]\)*\([^;}]\+$\)/\1 out(), \2 ; is_print_last=true;/' > $snippet_cc
+
+cat  $snippet_file |
+
+#  this shouldn't be sed
+sed  -r  '
+	s|//.*$||;
+	s|/\*[^*]*\*/||;
+	s/.*;;//
+	s/$//;
+	s/\/\/.$//;
+	s/[ \t]*$//;
+	s/[\n]/\t/g;
+	/^$/d;
+	s/(.*[;])*([^;]+$)/ \1'$scc_PRINTER' (\2) '$scc_PRINTER_END'; is_print_last=true; /
+' > $snippet_cc
+
+# split file scope part
+cat  $snippet_file | sed  -n 's/\(;;\).*/;/p'  > $snippet_h
+
+
+#####################################################################################  GENERATE SRC
+
+
+
+${CXX-$default_CXX} $CXXFLAGS $main_cc -o $main_exe $LDFLAGS $LIBS || exit 1
+	
+if  [[ $execute == 1 ]]  ; then 
+	LCC_ALL=C $time $main_exe "$@"
+	exit $?
+else
+	exit 0
+fi
+
+# vim:set ts=8 sw=8 syntax=sh:   
